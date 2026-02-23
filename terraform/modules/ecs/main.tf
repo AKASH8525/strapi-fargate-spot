@@ -65,7 +65,6 @@ resource "aws_ecs_service" "this" {
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = 1
 
-  # Using Fargate Spot capacity provider
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
     weight            = 1
@@ -77,7 +76,11 @@ resource "aws_ecs_service" "this" {
     assign_public_ip = false
   }
 
-  propagate_tags = "SERVICE"
+  load_balancer {
+    target_group_arn = var.target_group_arn
+    container_name   = "strapi"
+    container_port   = 1337
+  }
 
   depends_on = [
     aws_ecs_task_definition.this
