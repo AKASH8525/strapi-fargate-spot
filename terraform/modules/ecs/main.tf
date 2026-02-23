@@ -7,19 +7,6 @@ resource "aws_ecs_cluster" "this" {
 }
 
 # -----------------------------------
-# CloudWatch Log Group
-# -----------------------------------
-
-resource "aws_cloudwatch_log_group" "strapi" {
-  name              = "/ecs/${var.project_name}-strapi"
-  retention_in_days = 7
-
-  tags = {
-    Name = "${var.project_name}-log-group"
-  }
-}
-
-# -----------------------------------
 # Task Definition (FARGATE)
 # -----------------------------------
 
@@ -47,6 +34,8 @@ resource "aws_ecs_task_definition" "this" {
       ]
 
       environment = [
+        { name = "HOST", value = "0.0.0.0" },
+
         { name = "DATABASE_CLIENT", value = "postgres" },
         { name = "DATABASE_HOST", value = var.db_endpoint },
         { name = "DATABASE_PORT", value = "5432" },
@@ -62,25 +51,12 @@ resource "aws_ecs_task_definition" "this" {
         { name = "ADMIN_JWT_SECRET", value = "adminsecret123" },
         { name = "API_TOKEN_SALT", value = "salt123" }
       ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.strapi.name
-          awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "ecs"
-        }
-      }
     }
   ])
-
-  depends_on = [
-    aws_cloudwatch_log_group.strapi
-  ]
 }
 
 # -----------------------------------
-# ECS Service (FARGATE - PRIVATE)
+# ECS Service (FARGATE SPOT)
 # -----------------------------------
 
 resource "aws_ecs_service" "this" {
@@ -88,18 +64,17 @@ resource "aws_ecs_service" "this" {
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = 1
-  launch_type     = "FARGATE"
+
+  # Using Fargate Spot capacity provider
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE_SPOT"
+    weight            = 1
+  }
 
   network_configuration {
     subnets          = var.subnet_ids
     security_groups  = [var.ecs_sg_id]
-    assign_public_ip = false   # IMPORTANT: private subnet
-  }
-
-  load_balancer {
-    target_group_arn = var.target_group_arn
-    container_name   = "strapi"
-    container_port   = 1337
+    assign_public_ip = false
   }
 
   propagate_tags = "SERVICE"
@@ -107,54 +82,4 @@ resource "aws_ecs_service" "this" {
   depends_on = [
     aws_ecs_task_definition.this
   ]
-}
-
-# -----------------------------------
-# CloudWatch Dashboard
-# -----------------------------------
-
-resource "aws_cloudwatch_dashboard" "ecs_dashboard" {
-  dashboard_name = "${var.project_name}-ecs-dashboard"
-
-  dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
-
-        properties = {
-          metrics = [
-            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.this.name, "ServiceName", aws_ecs_service.this.name],
-            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.this.name, "ServiceName", aws_ecs_service.this.name]
-          ]
-          period = 300
-          stat   = "Average"
-          region = var.aws_region
-          title  = "CPU and Memory Utilization"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0
-        y      = 7
-        width  = 12
-        height = 6
-
-        properties = {
-          metrics = [
-            ["AWS/ECS", "RunningTaskCount", "ClusterName", aws_ecs_cluster.this.name, "ServiceName", aws_ecs_service.this.name],
-            ["AWS/ECS", "NetworkRxBytes", "ClusterName", aws_ecs_cluster.this.name, "ServiceName", aws_ecs_service.this.name],
-            ["AWS/ECS", "NetworkTxBytes", "ClusterName", aws_ecs_cluster.this.name, "ServiceName", aws_ecs_service.this.name]
-          ]
-          period = 300
-          stat   = "Average"
-          region = var.aws_region
-          title  = "Task Count and Network Traffic"
-        }
-      }
-    ]
-  })
 }
